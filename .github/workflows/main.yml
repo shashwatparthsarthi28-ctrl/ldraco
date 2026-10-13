@@ -18,7 +18,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Java 17
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
@@ -27,9 +27,9 @@ jobs:
         id: project
         shell: bash
         run: |
-          if [ -f "settings.gradle" ] || [ -f "settings.gradle.kts" ]; then
+          if { [ -f "settings.gradle" ] || [ -f "settings.gradle.kts" ]; } && [ -d "app" ]; then
             echo "dir=." >> "$GITHUB_OUTPUT"
-          elif [ -f "CyberOpsLock/settings.gradle" ] || [ -f "CyberOpsLock/settings.gradle.kts" ]; then
+          elif { [ -f "CyberOpsLock/settings.gradle" ] || [ -f "CyberOpsLock/settings.gradle.kts" ]; } && [ -d "CyberOpsLock/app" ]; then
             echo "dir=CyberOpsLock" >> "$GITHUB_OUTPUT"
           else
             echo "::error::Android project not found. Expected settings.gradle(.kts) and app/ at repository root or inside CyberOpsLock/."
@@ -39,28 +39,16 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Accept Android SDK licenses and install platform tools
+      - name: Accept Android SDK licenses
         shell: bash
         run: |
-          set -euo pipefail
-          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | sort -V | tail -n 1)"
-          if [ -z "$SDKMANAGER" ]; then
-            echo "::error::sdkmanager was not found under $ANDROID_HOME/cmdline-tools"
-            exit 1
-          fi
-
-          # sdkmanager accepts licenses interactively; preserve its exit code while
-          # avoiding a false failure when `yes` receives SIGPIPE after all prompts finish.
           set +o pipefail
-          yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" --licenses
-          SDK_STATUS=${PIPESTATUS[1]}
-          set -o pipefail
-          if [ "$SDK_STATUS" -ne 0 ]; then
-            echo "::error::Android SDK license acceptance failed (exit $SDK_STATUS)."
-            exit "$SDK_STATUS"
+          yes | sdkmanager --licenses
+          status=${PIPESTATUS[1]}
+          if [ "$status" -ne 0 ]; then
+            echo "::error::sdkmanager --licenses failed with exit code $status"
+            exit "$status"
           fi
-
-          "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -69,10 +57,7 @@ jobs:
 
       - name: Build debug APK
         working-directory: ${{ steps.project.outputs.dir }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          gradle --no-daemon assembleDebug
+        run: gradle --no-daemon assembleDebug
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
