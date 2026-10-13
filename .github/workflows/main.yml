@@ -23,24 +23,25 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # Do NOT use android-actions/setup-android here:
-      # its current setup step calls `sdkmanager tools`, which fails because
-      # the old standalone "tools" SDK package is no longer available.
+      # GitHub's hosted runner already includes the Android SDK.
+      # Avoid android-actions/setup-android here because its setup currently
+      # tries to install the obsolete standalone SDK package named "tools".
       - name: Accept Android SDK licenses
         shell: bash
         run: |
           set -e
-          SDKMANAGER="$(find "${ANDROID_HOME:-/usr/local/lib/android/sdk}/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager 2>/dev/null | sort -V | tail -n 1)"
           if [ -z "$SDKMANAGER" ]; then
-            echo "::error::Android sdkmanager not found on the GitHub runner."
+            echo "::error::Android sdkmanager was not found in $SDK_ROOT/cmdline-tools"
             exit 1
           fi
           set +o pipefail
-          yes | "$SDKMANAGER" --sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}" --licenses
-          sdk_status=${PIPESTATUS[1]}
-          if [ "$sdk_status" -ne 0 ]; then
-            echo "::error::sdkmanager license acceptance failed with exit code $sdk_status"
-            exit "$sdk_status"
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses
+          license_status=${PIPESTATUS[1]}
+          if [ "$license_status" -ne 0 ]; then
+            echo "::error::Android SDK license acceptance failed with exit code $license_status"
+            exit "$license_status"
           fi
 
       - name: Locate Android project
@@ -48,15 +49,31 @@ jobs:
         shell: bash
         run: |
           if { [ -f "settings.gradle" ] || [ -f "settings.gradle.kts" ]; } && [ -d "app" ]; then
-            echo "dir=." >> "$GITHUB_OUTPUT"
+            PROJECT_DIR="."
           elif { [ -f "CyberOpsLock/settings.gradle" ] || [ -f "CyberOpsLock/settings.gradle.kts" ]; } && [ -d "CyberOpsLock/app" ]; then
-            echo "dir=CyberOpsLock" >> "$GITHUB_OUTPUT"
+            PROJECT_DIR="CyberOpsLock"
           else
-            echo "::error::Could not find Android project. Expected settings.gradle(.kts) and app/ at repository root or in CyberOpsLock/."
+            echo "::error::Could not find Android project root with settings.gradle(.kts) and app/."
             echo "Repository root contents:"
             ls -la
             exit 1
           fi
+          echo "dir=$PROJECT_DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Ensure AndroidX is enabled
+        shell: bash
+        working-directory: ${{ steps.project.outputs.dir }}
+        run: |
+          set -e
+          if [ ! -f gradle.properties ]; then
+            touch gradle.properties
+          fi
+          if grep -qE '^[[:space:]]*android\.useAndroidX[[:space:]]*=' gradle.properties; then
+            sed -i -E 's/^[[:space:]]*android\.useAndroidX[[:space:]]*=.*/android.useAndroidX=true/' gradle.properties
+          else
+            printf '\nandroid.useAndroidX=true\n' >> gradle.properties
+          fi
+          echo "AndroidX enabled for this CI build."
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
